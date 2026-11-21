@@ -11,18 +11,46 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-type Config struct {
-	DefaultPortfolio string            `toml:"default_portfolio,omitempty"`
-	Markets          map[string]Market `toml:"markets"`
-	Portfolios       []Portfolio       `toml:"portfolios"`
+const (
+	MarketUS = "us"
+	MarketCN = "cn"
+
+	KindStock = "stock"
+	KindETF   = "etf"
+
+	RebalanceNever     = "never"
+	RebalanceMonthly   = "monthly"
+	RebalanceQuarterly = "quarterly"
+	RebalanceYearly    = "yearly"
+)
+
+var RebalanceOptions = []string{
+	RebalanceNever,
+	RebalanceMonthly,
+	RebalanceQuarterly,
+	RebalanceYearly,
 }
+
+type Config struct {
+	Markets   map[string]Market `toml:"markets"`
+	Portfolio Portfolio         `toml:"portfolio"`
+	Analysis  AnalysisConfig    `toml:"analysis,omitempty"`
+}
+
+type AnalysisConfig struct {
+	Order  []string `toml:"order,omitempty"`
+	Hidden []string `toml:"hidden,omitempty"`
+}
+
 type Market struct {
 	Providers []ProviderConfig `toml:"providers"`
 }
+
 type ProviderConfig struct {
 	Name    string `toml:"name"`
 	Enabled bool   `toml:"enabled"`
 }
+
 type Portfolio struct {
 	ID             string     `toml:"id"`
 	Name           string     `toml:"name"`
@@ -34,6 +62,7 @@ type Portfolio struct {
 	Rebalance      string     `toml:"rebalance"`
 	Positions      []Position `toml:"positions"`
 }
+
 type Position struct {
 	Symbol     string  `toml:"symbol"`
 	Market     string  `toml:"market"`
@@ -44,28 +73,43 @@ type Position struct {
 
 // diskConfig deliberately represents one market and one portfolio per file.
 type diskConfig struct {
-	Market    string    `toml:"market"`
-	Portfolio Portfolio `toml:"portfolio"`
+	Market    string         `toml:"market"`
+	Portfolio Portfolio      `toml:"portfolio"`
+	Analysis  AnalysisConfig `toml:"analysis,omitempty"`
 }
 
 func Builtin(market string) (string, Market, error) {
 	switch market {
-	case "us":
+	case MarketUS:
 		return "USD", Market{Providers: []ProviderConfig{{Name: "yahoo", Enabled: true}, {Name: "stooq", Enabled: true}}}, nil
-	case "cn":
+	case MarketCN:
 		return "CNY", Market{Providers: []ProviderConfig{{Name: "eastmoney", Enabled: true}}}, nil
 	default:
 		return "", Market{}, fmt.Errorf("unsupported market %q", market)
 	}
 }
+
 func New(market string) (Config, error) {
 	currency, source, err := Builtin(market)
 	if err != nil {
 		return Config{}, err
 	}
-	p := Portfolio{ID: "my-portfolio", Name: "My Portfolio", Market: market, BaseCurrency: currency, PriceCurrency: currency, StartDate: time.Now().AddDate(-1, 0, 0).Format("2006-01-02"), Rebalance: "never", InitialCapital: 10000}
-	return Config{DefaultPortfolio: p.ID, Markets: map[string]Market{market: source}, Portfolios: []Portfolio{p}}, nil
+	p := Portfolio{
+		ID:             "my-portfolio",
+		Name:           "My Portfolio",
+		Market:         market,
+		BaseCurrency:   currency,
+		PriceCurrency:  currency,
+		StartDate:      time.Now().AddDate(-1, 0, 0).Format("2006-01-02"),
+		Rebalance:      RebalanceNever,
+		InitialCapital: 10000,
+	}
+	return Config{
+		Markets:   map[string]Market{market: source},
+		Portfolio: p,
+	}, nil
 }
+
 func Load(path string) (Config, error) {
 	var disk diskConfig
 	if _, err := toml.DecodeFile(path, &disk); err != nil {
@@ -81,15 +125,27 @@ func Load(path string) (Config, error) {
 	if disk.Portfolio.InitialCapital == 0 {
 		disk.Portfolio.InitialCapital = 10000
 	}
-	c.Portfolios[0] = disk.Portfolio
-	c.DefaultPortfolio = disk.Portfolio.ID
+	c.Portfolio = disk.Portfolio
+	c.Analysis = disk.Analysis
 	return c, c.Validate()
 }
-func (c Config) Validate() error {
-	if len(c.Portfolios) != 1 {
-		return fmt.Errorf("one configuration must contain exactly one portfolio")
+
+func (c Config) Clone() Config {
+	out := c
+	if c.Markets != nil {
+		out.Markets = make(map[string]Market, len(c.Markets))
+		for k, m := range c.Markets {
+			out.Markets[k] = Market{Providers: append([]ProviderConfig(nil), m.Providers...)}
+		}
 	}
-	p := c.Portfolios[0]
+	out.Portfolio.Positions = append([]Position(nil), c.Portfolio.Positions...)
+	out.Analysis.Order = append([]string(nil), c.Analysis.Order...)
+	out.Analysis.Hidden = append([]string(nil), c.Analysis.Hidden...)
+	return out
+}
+
+func (c Config) Validate() error {
+	p := c.Portfolio
 	currency, _, err := Builtin(p.Market)
 	if err != nil {
 		return err
@@ -107,7 +163,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("start date cannot be in the future")
 	}
 	switch p.Rebalance {
-	case "never", "monthly", "quarterly", "yearly":
+	case RebalanceNever, RebalanceMonthly, RebalanceQuarterly, RebalanceYearly:
 	default:
 		return fmt.Errorf("invalid rebalance strategy")
 	}
@@ -124,7 +180,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("empty or duplicate symbol %q", pos.Symbol)
 		}
 		seen[pos.Symbol] = true
-		if pos.Kind != "stock" && pos.Kind != "etf" {
+		if pos.Kind != KindStock && pos.Kind != KindETF {
 			return fmt.Errorf("invalid asset type")
 		}
 		if math.IsNaN(pos.Allocation) || math.IsInf(pos.Allocation, 0) || pos.Allocation < 0 || pos.Allocation > 1 {
@@ -137,14 +193,7 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
-func marketEnabled(m Market) bool {
-	for _, p := range m.Providers {
-		if p.Enabled {
-			return true
-		}
-	}
-	return false
-}
+
 func Save(path string, c Config) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -159,7 +208,11 @@ func Save(path string, c Config) error {
 	name := tmp.Name()
 	defer os.Remove(name)
 	if err = tmp.Chmod(0600); err == nil {
-		err = toml.NewEncoder(tmp).Encode(diskConfig{Market: c.Portfolios[0].Market, Portfolio: c.Portfolios[0]})
+		err = toml.NewEncoder(tmp).Encode(diskConfig{
+			Market:    c.Portfolio.Market,
+			Portfolio: c.Portfolio,
+			Analysis:  c.Analysis,
+		})
 	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
@@ -169,6 +222,7 @@ func Save(path string, c Config) error {
 	}
 	return os.Rename(name, path)
 }
+
 func Slug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder

@@ -22,14 +22,15 @@ The default page is My Portfolio. Press `a` (Add) to open the searchable asset d
 1. Start in My Portfolio and press `a` to Add a position.
 2. Type a symbol or name to fuzzy-search the directory, use Up/Down to select, and Enter to add. The app returns to My Portfolio; new positions start with zero weight. Esc cancels.
 3. Select a position and press `e` to set its allocation percentage. Enter saves; Esc cancels. Use `x` to remove a position.
-4. Press `2` to analyze the portfolio. Incomplete weights are normalized for analysis. Analysis includes candlestick history, drawdown with axes, target allocation, and period returns with both percentages and currency gain/loss (newest period first).
+4. Press `2` to analyze the portfolio. Incomplete weights are normalized for analysis. Analysis includes candlestick history, drawdown with axes, target allocation, period returns with percentages and currency gain/loss, weight drift from targets, and per-asset contribution to model returns.
 
-Empty portfolios and partially assigned allocations can be saved. Analysis requires complete weights and sufficient history. Returns are model results, not actual account profit; fees, taxes and FX conversion are excluded.
+Empty portfolios and partially assigned allocations can be saved. Analysis normalizes incomplete weights and requires sufficient price history. Returns are model results, not actual account profit; fees, taxes and FX conversion are excluded.
 
 ## Keys
 
 - `1` My Portfolio, `2` Analysis. Tab switches pages when no card is active; while an Analysis card is active, Tab moves to and activates the next card.
 - In Analysis: ↑/↓ selects a card, Enter activates it, and Esc returns to card selection. On active chart cards, ↑/↓ changes the interval and ←/→ pans that chart. `z` cycles day/week/month/quarter/year; PgUp/PgDn scrolls.
+- In Analysis, `a` opens the hidden-card list and adds a selected card. `x` removes the selected card after confirmation. `J` / `K` or Shift+↓ / Shift+↑ move it. Card order and visibility persist in the `[analysis]` TOML section.
 - On My Portfolio, `e` edits the selected asset target weight. On Analysis, `e` opens portfolio settings (rebalance, initial capital, start date).
 - In asset details, `z`/Ctrl+↑↓ changes interval; ←/→ pans one candle.
 - Up/Down or j/k: select an asset.
@@ -39,6 +40,12 @@ Empty portfolios and partially assigned allocations can be saved. Analysis requi
 - `r`: refresh asset directory and load prices; d/w/m/c: day/week/month/quarter chart aggregation.
 - Left/Right: pan analysis by 30 days; Home: return to latest.
 - `q` or Ctrl+C: quit.
+
+## Analysis plugins
+
+Analysis cards can be extended with Lua. Files placed in `<config-dir>/plugins/*.lua` load at startup and participate in the same add/remove/reorder workflow as built-in cards. Plugins run in a restricted Lua sandbox and return declarative `text`, `metrics`, `table`, `line`, and `bars` blocks. See [docs/plugins.md](docs/plugins.md) and [examples/plugins/drawdown_summary.lua](examples/plugins/drawdown_summary.lua).
+
+Restart after adding or editing a plugin; hot reload is not implemented yet.
 
 ## Proxy
 

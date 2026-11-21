@@ -8,12 +8,12 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"portifolio/internal/config"
+	"portifolio/internal/marketdata"
 	"portifolio/internal/provider"
 	"portifolio/internal/storage"
 	"portifolio/internal/ui"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -60,7 +60,11 @@ func main() {
 	registry.Register(provider.NewStooq())
 	registry.Register(provider.NewEastmoney())
 
-	program := tea.NewProgram(ui.New(initial, cfgPath, store, registry), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	dataSvc := marketdata.NewService(store, registry, store, provider.NewDirectory())
+	model := ui.New(initial, cfgPath, dataSvc)
+	defer model.Close()
+
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		fatal(err)
 	}

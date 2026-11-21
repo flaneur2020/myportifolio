@@ -3,15 +3,18 @@ package storage
 import (
 	"context"
 	"fmt"
-	"portifolio/internal/provider"
 	"time"
+
+	"portifolio/internal/config"
+	"portifolio/internal/domain"
 )
 
 func (s *Store) assetSchema(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS assets(market TEXT NOT NULL,symbol TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(market,symbol)); CREATE TABLE IF NOT EXISTS asset_directory(market TEXT PRIMARY KEY,updated_at TEXT NOT NULL);`)
 	return err
 }
-func (s *Store) Assets(ctx context.Context, market string) ([]provider.Asset, time.Time, error) {
+
+func (s *Store) Assets(ctx context.Context, market string) ([]domain.Asset, time.Time, error) {
 	if err := s.assetSchema(ctx); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -19,9 +22,9 @@ func (s *Store) Assets(ctx context.Context, market string) ([]provider.Asset, ti
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	var out []provider.Asset
+	var out []domain.Asset
 	for rows.Next() {
-		a := provider.Asset{Market: market}
+		a := domain.Asset{Market: market}
 		if err = rows.Scan(&a.Symbol, &a.Name, &a.Kind); err != nil {
 			rows.Close()
 			return nil, time.Time{}, err
@@ -34,16 +37,17 @@ func (s *Store) Assets(ctx context.Context, market string) ([]provider.Asset, ti
 		return nil, time.Time{}, err
 	}
 	var stamp string
-	s.db.QueryRowContext(ctx, `SELECT updated_at FROM asset_directory WHERE market=?`, market).Scan(&stamp)
+	_ = s.db.QueryRowContext(ctx, `SELECT updated_at FROM asset_directory WHERE market=?`, market).Scan(&stamp)
 	updated, _ := time.Parse(time.RFC3339, stamp)
 	return out, updated, nil
 }
-func (s *Store) PutAssets(ctx context.Context, market string, assets []provider.Asset) error {
+
+func (s *Store) PutAssets(ctx context.Context, market string, assets []domain.Asset) error {
 	if len(assets) == 0 {
 		return fmt.Errorf("refusing to replace directory with empty list")
 	}
 	for _, a := range assets {
-		if a.Market != market || a.Symbol == "" || a.Name == "" || (a.Kind != "stock" && a.Kind != "etf") {
+		if a.Market != market || a.Symbol == "" || a.Name == "" || (a.Kind != config.KindStock && a.Kind != config.KindETF) {
 			return fmt.Errorf("invalid directory asset %q", a.Symbol)
 		}
 	}

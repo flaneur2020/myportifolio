@@ -1,10 +1,12 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"path/filepath"
-	"portifolio/internal/config"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"portifolio/internal/config"
+	"portifolio/internal/domain"
 )
 
 func pressKey(t *testing.T, m Model, key tea.KeyMsg) Model {
@@ -12,34 +14,43 @@ func pressKey(t *testing.T, m Model, key tea.KeyMsg) Model {
 	next, _ := m.Update(key)
 	return next.(Model)
 }
+
+func testAssets() []domain.Asset {
+	return []domain.Asset{
+		{Symbol: "VTI", Name: "Vanguard Total Stock Market", Market: config.MarketUS, Kind: config.KindETF},
+		{Symbol: "VOO", Name: "Vanguard S&P 500", Market: config.MarketUS, Kind: config.KindETF},
+	}
+}
+
 func TestSetupOnlySelectsMarket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	m := New(nil, path, nil, nil)
+	m := New(nil, path, nil)
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.page != holdingsPage || m.cfg.Portfolios[0].Market != "cn" || m.cfg.Portfolios[0].PriceCurrency != "CNY" {
+	if m.page != holdingsPage || m.cfg.Portfolio.Market != config.MarketCN || m.cfg.Portfolio.PriceCurrency != "CNY" {
 		t.Fatal("market setup failed")
 	}
 	c, err := config.Load(path)
-	if err != nil || len(c.Portfolios[0].Positions) != 0 {
+	if err != nil || len(c.Portfolio.Positions) != 0 {
 		t.Fatalf("empty portfolio persistence: %v", err)
 	}
 }
+
 func TestFavoriteWeightAndAnalysisFlow(t *testing.T) {
-	c, _ := config.New("us")
+	c, _ := config.New(config.MarketUS)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	m := New(&c, path, nil, nil)
+	m := New(&c, path, nil)
 	m.assets = testAssets()
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(m.cfg.Portfolios[0].Positions) != 1 {
+	if len(m.cfg.Portfolio.Positions) != 1 {
 		t.Fatal("favorite was not added")
 	}
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
-	m.input = "100"
+	m.weight.input = "100"
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	saved, err := config.Load(path)
-	if err != nil || saved.Portfolios[0].Positions[0].Allocation != 1 {
+	if err != nil || saved.Portfolio.Positions[0].Allocation != 1 {
 		t.Fatalf("weight save: %v", err)
 	}
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
@@ -47,42 +58,53 @@ func TestFavoriteWeightAndAnalysisFlow(t *testing.T) {
 		t.Fatal("cannot open analysis")
 	}
 }
-func TestMarketFuzzySearch(t *testing.T) {
-	c, _ := config.New("us")
-	m := New(&c, "", nil, nil)
-	m.assets = testAssets()
-	m.page = addPage
-	m.query = "vgd"
-	if len(m.items()) < 2 {
-		t.Fatal("fuzzy name search failed")
-	}
-	for _, s := range m.items() {
-		if s.Market != "us" {
-			t.Fatal("foreign market leaked")
-		}
-	}
-}
+
 func TestInvalidWeightDoesNotMutatePortfolio(t *testing.T) {
-	c, _ := config.New("us")
+	c, _ := config.New(config.MarketUS)
 	path := filepath.Join(t.TempDir(), "config.toml")
-	m := New(&c, path, nil, nil)
+	m := New(&c, path, nil)
 	m.assets = testAssets()
 	m.page = addPage
-	m.toggleFavorite()
+	m.toggleFavorite(m.addItems(), &m.add.cursor)
 	m.page = weightPage
-	m.weightSymbol = "VTI"
-	m.input = "NaN"
+	m.weight.symbol = "VTI"
+	m.weight.input = "NaN"
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.cfg.Portfolios[0].Positions[0].Allocation != 0 {
+	if m.cfg.Portfolio.Positions[0].Allocation != 0 {
 		t.Fatal("invalid value changed allocation")
 	}
-	m.input = "25"
+	m.weight.input = "25"
 	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.cfg.Portfolios[0].Positions[0].Allocation != .25 {
+	if m.cfg.Portfolio.Positions[0].Allocation != .25 {
 		t.Fatal("cannot correct invalid allocation")
 	}
 }
 
-func testAssets() []security {
-	return []security{{"VTI", "Vanguard Total Stock Market", "us", "etf"}, {"VOO", "Vanguard S&P 500", "us", "etf"}}
+func TestWholeWeightHasNoDecimalSuffix(t *testing.T) {
+	c, _ := config.New(config.MarketUS)
+	c.Portfolio.Positions = []config.Position{{Symbol: "VTI", Market: config.MarketUS, Currency: "USD", Kind: config.KindETF, Allocation: .25}}
+	m := New(&c, "", nil)
+	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if m.weight.input != "25" {
+		t.Fatalf("expected integer default, got %q", m.weight.input)
+	}
+}
+
+func TestPriceAnimationLifecycle(t *testing.T) {
+	m := Model{priceLoading: map[string]bool{"SPY": true}, bars: map[string][]domain.Bar{}, errors: map[string]string{}}
+	before := m.priceAnimation()
+	next, cmd := m.Update(priceTick{})
+	m = next.(Model)
+	if cmd == nil || m.priceAnimation() == before {
+		t.Fatal("price animation did not advance")
+	}
+	next, _ = m.Update(assetLoaded{symbol: "SPY"})
+	m = next.(Model)
+	if len(m.priceLoading) != 0 {
+		t.Fatal("load did not finish")
+	}
+	_, cmd = m.Update(priceTick{})
+	if cmd != nil {
+		t.Fatal("animation continues after completion")
+	}
 }

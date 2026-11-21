@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 	"portifolio/internal/config"
-	"portifolio/internal/provider"
+	"portifolio/internal/domain"
 )
 
 type Store struct{ db *sql.DB }
@@ -32,8 +32,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	return s, nil
 }
+
 func (s *Store) Close() error { return s.db.Close() }
-func (s *Store) Put(ctx context.Context, p config.Position, bars []provider.Bar) error {
+
+func (s *Store) Put(ctx context.Context, p config.Position, bars []domain.Bar) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -44,24 +46,26 @@ func (s *Store) Put(ctx context.Context, p config.Position, bars []provider.Bar)
 		return err
 	}
 	defer stmt.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
 	for _, b := range bars {
-		_, err = stmt.ExecContext(ctx, p.Market, p.Symbol, b.Date.Format("2006-01-02"), b.Open, b.High, b.Low, b.Close, b.AdjustedClose, b.Currency, b.Source, time.Now().UTC().Format(time.RFC3339))
+		_, err = stmt.ExecContext(ctx, p.Market, p.Symbol, b.Date.Format("2006-01-02"), b.Open, b.High, b.Low, b.Close, b.AdjustedClose, b.Currency, b.Source, now)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
-func (s *Store) History(ctx context.Context, p config.Position, start, end time.Time) ([]provider.Bar, error) {
+
+func (s *Store) History(ctx context.Context, p config.Position, start, end time.Time) ([]domain.Bar, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT date,open,high,low,close,adjusted_close,currency,provider FROM prices WHERE market=? AND symbol=? AND date>=? AND date<=? ORDER BY date`, p.Market, p.Symbol, start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []provider.Bar
+	var out []domain.Bar
 	for rows.Next() {
 		var date, currency, source string
-		var b provider.Bar
+		var b domain.Bar
 		if err = rows.Scan(&date, &b.Open, &b.High, &b.Low, &b.Close, &b.AdjustedClose, &currency, &source); err != nil {
 			return nil, err
 		}
@@ -75,6 +79,7 @@ func (s *Store) History(ctx context.Context, p config.Position, start, end time.
 	}
 	return out, rows.Err()
 }
+
 func (s *Store) Health() error {
 	var n int
 	if err := s.db.QueryRow("SELECT count(*) FROM prices").Scan(&n); err != nil {

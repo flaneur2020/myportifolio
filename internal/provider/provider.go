@@ -6,24 +6,21 @@ import (
 	"time"
 
 	"portifolio/internal/config"
+	"portifolio/internal/domain"
 )
 
-type Bar struct {
-	Date                                  time.Time
-	Open, High, Low, Close, AdjustedClose float64
-	Currency                              string
-	Source                                string
-}
 type Provider interface {
 	Name() string
 	Markets() []string
-	History(context.Context, config.Position, time.Time, time.Time) ([]Bar, error)
+	History(context.Context, config.Position, time.Time, time.Time) ([]domain.Bar, error)
 }
+
 type Registry struct{ items map[string]Provider }
 
 func NewRegistry() *Registry            { return &Registry{items: map[string]Provider{}} }
 func (r *Registry) Register(p Provider) { r.items[p.Name()] = p }
-func (r *Registry) History(ctx context.Context, markets map[string]config.Market, pos config.Position, start, end time.Time) ([]Bar, error) {
+
+func (r *Registry) History(ctx context.Context, markets map[string]config.Market, pos config.Position, start, end time.Time) ([]domain.Bar, error) {
 	m, ok := markets[pos.Market]
 	if !ok {
 		return nil, fmt.Errorf("no providers configured for market %s", pos.Market)

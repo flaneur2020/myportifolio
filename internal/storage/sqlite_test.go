@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"portifolio/internal/config"
-	"portifolio/internal/provider"
+	"portifolio/internal/domain"
 )
 
 func TestSQLitePriceRoundTrip(t *testing.T) {
@@ -16,9 +16,9 @@ func TestSQLitePriceRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	p := config.Position{Market: "us", Symbol: "SPY"}
+	p := config.Position{Market: config.MarketUS, Symbol: "SPY"}
 	d := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err = s.Put(context.Background(), p, []provider.Bar{{Date: d, Close: 470, AdjustedClose: 468, Currency: "USD", Source: "mock"}}); err != nil {
+	if err = s.Put(context.Background(), p, []domain.Bar{{Date: d, Close: 470, AdjustedClose: 468, Currency: "USD", Source: "mock"}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.History(context.Background(), p, d, d)

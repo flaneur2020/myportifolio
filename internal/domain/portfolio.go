@@ -7,16 +7,71 @@ import (
 	"portifolio/internal/config"
 )
 
-type Point struct {
-	Date  time.Time
-	Value float64
-}
 type AssetSeries struct {
 	Position config.Position
 	Points   []Point
 }
 
+type PortfolioSnapshot struct {
+	Date    time.Time
+	Value   float64
+	Prices  []float64
+	Weights []float64
+}
+
+func TotalAllocation(positions []config.Position) float64 {
+	total := 0.0
+	for _, p := range positions {
+		total += p.Allocation
+	}
+	return total
+}
+
+func PositivePositions(p config.Portfolio) []config.Position {
+	var out []config.Position
+	for _, pos := range p.Positions {
+		if pos.Allocation > 0 {
+			out = append(out, pos)
+		}
+	}
+	return out
+}
+
+// NormalizedPortfolio returns a copy of p whose positive weights sum to 1.0,
+// along with the original total allocation.
+func NormalizedPortfolio(p config.Portfolio) (config.Portfolio, float64, bool) {
+	total := TotalAllocation(p.Positions)
+	if total <= 0 {
+		return p, total, false
+	}
+	out := p
+	out.Positions = append([]config.Position(nil), p.Positions...)
+	for i := range out.Positions {
+		out.Positions[i].Allocation /= total
+	}
+	return out, total, true
+}
+
+func CurveFromSnapshots(snapshots []PortfolioSnapshot) []Point {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	base := snapshots[0].Value
+	out := make([]Point, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		out = append(out, Point{Date: snapshot.Date, Value: snapshot.Value / base * 100})
+	}
+	return out
+}
+
 func BuildPortfolio(p config.Portfolio, series []AssetSeries) []Point {
+	return CurveFromSnapshots(BuildPortfolioSnapshots(p, series))
+}
+
+// BuildPortfolioSnapshots exposes the daily prices, end-of-day weights and raw
+// value used by the model. This lets analysis such as drift and contribution
+// reuse exactly the same simulation as the portfolio curve.
+func BuildPortfolioSnapshots(p config.Portfolio, series []AssetSeries) []PortfolioSnapshot {
 	if len(series) == 0 {
 		return nil
 	}
@@ -64,12 +119,16 @@ func BuildPortfolio(p config.Portfolio, series []AssetSeries) []Point {
 		previous[i] = prices[i][dates[first]]
 		units[i] = s.Position.Allocation / previous[i]
 	}
-	out := make([]Point, 0, len(dates)-first)
+	rbGrain, doRebalance := rebalanceGrain(p.Rebalance)
+	out := make([]PortfolioSnapshot, 0, len(dates)-first)
 	lastPeriod := ""
 	for _, d := range dates[first:] {
 		date, _ := time.Parse("2006-01-02", d)
-		period := rebalancePeriod(date, p.Rebalance)
-		if len(out) > 0 && p.Rebalance != "never" && period != lastPeriod {
+		period := ""
+		if doRebalance {
+			period = PeriodKey(date, rbGrain)
+		}
+		if len(out) > 0 && doRebalance && period != lastPeriod {
 			value := 0.0
 			for i := range units {
 				value += units[i] * previous[i]
@@ -88,48 +147,25 @@ func BuildPortfolio(p config.Portfolio, series []AssetSeries) []Point {
 			value += units[i] * previous[i]
 		}
 		if value > 0 {
-			out = append(out, Point{Date: date, Value: value})
+			pricesCopy := append([]float64(nil), previous...)
+			weights := make([]float64, len(series))
+			for i := range series {
+				weights[i] = units[i] * previous[i] / value
+			}
+			out = append(out, PortfolioSnapshot{Date: date, Value: value, Prices: pricesCopy, Weights: weights})
 		}
 		lastPeriod = period
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	base := out[0].Value
-	for i := range out {
-		out[i].Value = out[i].Value / base * 100
 	}
 	return out
 }
 
-func rebalancePeriod(t time.Time, rule string) string {
-	switch rule {
-	case "monthly":
-		return t.Format("2006-01")
-	case "quarterly":
-		return t.Format("2006") + "-Q" + string(rune('1'+(int(t.Month())-1)/3))
-	case "yearly":
-		return t.Format("2006")
-	}
-	return ""
-}
-func Aggregate(points []Point, grain string) []Point {
-	if grain == "day" {
+func Aggregate(points []Point, grain Grain) []Point {
+	if grain == GrainDay {
 		return points
 	}
 	buckets := map[string]Point{}
 	for _, p := range points {
-		key := p.Date.Format("2006-01-02")
-		switch grain {
-		case "week":
-			y, w := p.Date.ISOWeek()
-			key = time.Date(y, 1, 4, 0, 0, 0, 0, time.UTC).AddDate(0, 0, (w-1)*7).Format("2006-01-02")
-		case "month":
-			key = p.Date.Format("2006-01")
-		case "quarter":
-			key = p.Date.Format("2006") + "-Q" + string(rune('1'+(int(p.Date.Month())-1)/3))
-		}
-		buckets[key] = p
+		buckets[PeriodKey(p.Date, grain)] = p
 	}
 	keys := make([]string, 0, len(buckets))
 	for k := range buckets {

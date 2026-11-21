@@ -10,15 +10,17 @@ import (
 	"time"
 
 	"portifolio/internal/config"
+	"portifolio/internal/domain"
 )
 
 type Eastmoney struct{ client *http.Client }
 
 func NewEastmoney() *Eastmoney         { return &Eastmoney{client: HTTPClient(20 * time.Second)} }
 func (e *Eastmoney) Name() string      { return "eastmoney" }
-func (e *Eastmoney) Markets() []string { return []string{"cn"} }
-func (e *Eastmoney) History(ctx context.Context, p config.Position, start, end time.Time) ([]Bar, error) {
-	if p.Market != "cn" {
+func (e *Eastmoney) Markets() []string { return []string{config.MarketCN} }
+
+func (e *Eastmoney) History(ctx context.Context, p config.Position, start, end time.Time) ([]domain.Bar, error) {
+	if p.Market != config.MarketCN {
 		return nil, fmt.Errorf("eastmoney supports China market only")
 	}
 	code := strings.TrimSpace(p.Symbol)
@@ -64,7 +66,7 @@ func (e *Eastmoney) History(ctx context.Context, p config.Position, start, end t
 	if body.Data == nil || len(body.Data.Klines) == 0 {
 		return nil, fmt.Errorf("eastmoney returned no daily prices for %s", code)
 	}
-	out := make([]Bar, 0, len(body.Data.Klines))
+	out := make([]domain.Bar, 0, len(body.Data.Klines))
 	for _, line := range body.Data.Klines {
 		parts := strings.Split(line, ",")
 		if len(parts) < 6 {
@@ -74,14 +76,14 @@ func (e *Eastmoney) History(ctx context.Context, p config.Position, start, end t
 		if err != nil {
 			continue
 		}
-		var open, close, high, low float64
+		var open, closeVal, high, low float64
 		if _, err = fmt.Sscan(parts[1], &open); err != nil {
 			continue
 		}
-		fmt.Sscan(parts[2], &close)
+		fmt.Sscan(parts[2], &closeVal)
 		fmt.Sscan(parts[3], &high)
 		fmt.Sscan(parts[4], &low)
-		out = append(out, Bar{Date: d, Open: open, Close: close, High: high, Low: low, AdjustedClose: close, Currency: "CNY", Source: e.Name()})
+		out = append(out, domain.Bar{Date: d, Open: open, Close: closeVal, High: high, Low: low, AdjustedClose: closeVal, Currency: "CNY", Source: e.Name()})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("eastmoney returned no valid prices")

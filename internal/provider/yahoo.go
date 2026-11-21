@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"portifolio/internal/config"
+	"portifolio/internal/domain"
 )
 
 type Yahoo struct{ client *http.Client }
 
 func NewYahoo() *Yahoo             { return &Yahoo{client: HTTPClient(15 * time.Second)} }
 func (y *Yahoo) Name() string      { return "yahoo" }
-func (y *Yahoo) Markets() []string { return []string{"us"} }
+func (y *Yahoo) Markets() []string { return []string{config.MarketUS} }
 
-func (y *Yahoo) History(ctx context.Context, p config.Position, start, end time.Time) ([]Bar, error) {
-	if p.Market != "us" {
+func (y *Yahoo) History(ctx context.Context, p config.Position, start, end time.Time) ([]domain.Bar, error) {
+	if p.Market != config.MarketUS {
 		return nil, fmt.Errorf("yahoo supports US market only")
 	}
 	u := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?period1=%d&period2=%d&interval=1d&events=div%%2Csplits", url.PathEscape(p.Symbol), start.Unix(), end.AddDate(0, 0, 1).Unix())
@@ -74,17 +75,17 @@ func (y *Yahoo) History(ctx context.Context, p config.Position, start, end time.
 		return nil, fmt.Errorf("yahoo returned no quotes")
 	}
 	q := r.Indicators.Quote[0]
-	out := make([]Bar, 0, len(r.Timestamp))
+	out := make([]domain.Bar, 0, len(r.Timestamp))
 	for i, ts := range r.Timestamp {
 		if i >= len(q.Close) || q.Close[i] == nil {
 			continue
 		}
-		close := *q.Close[i]
-		adj := close
+		closeVal := *q.Close[i]
+		adj := closeVal
 		if len(r.Indicators.AdjClose) > 0 && i < len(r.Indicators.AdjClose[0].AdjClose) && r.Indicators.AdjClose[0].AdjClose[i] != nil {
 			adj = *r.Indicators.AdjClose[0].AdjClose[i]
 		}
-		b := Bar{Date: time.Unix(ts, 0).UTC(), Close: close, AdjustedClose: adj, Currency: r.Meta.Currency, Source: y.Name()}
+		b := domain.Bar{Date: time.Unix(ts, 0).UTC(), Close: closeVal, AdjustedClose: adj, Currency: r.Meta.Currency, Source: y.Name()}
 		if i < len(q.Open) {
 			b.Open = floatValue(q.Open[i])
 		}
@@ -101,6 +102,7 @@ func (y *Yahoo) History(ctx context.Context, p config.Position, start, end time.
 	}
 	return out, nil
 }
+
 func floatValue(v *float64) float64 {
 	if v == nil {
 		return 0
