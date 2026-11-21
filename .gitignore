@@ -1,0 +1,12 @@
+# Local portfolio configuration and price/cache data
+my-portfolio.toml
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local build output
+/portifolio
+/portifolio.exe
+
+# Editor / OS files
+.DS_Store
