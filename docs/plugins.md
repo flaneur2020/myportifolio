@@ -1,12 +1,18 @@
-# Analysis plugins
+# Plugins & Micro-Core Architecture
 
-Analysis cards can be extended with Lua files. Plugins are loaded at startup from:
+`portifolio` uses a micro-core architecture: `core/` contains only pure Go stdlib types, extension contracts, portfolio/analytics math, and the `core.Kernel` registry. Built-in markets (US, China), data providers (Yahoo, Stooq, Eastmoney), asset directories (Nasdaq Trader, Eastmoney), all 7 Analysis cards, and the default theme are bundled as embedded Lua plugins (`plugins/builtin/lua/*.lua`).
+
+User Lua plugins are loaded at startup from:
 
 ```text
 <directory containing config.toml>/plugins/*.lua
 ```
 
+You can also pass extra plugin directories with `--plugins /path/a,/path/b`.
+
 Plugin cards participate in the Analysis card order. New cards are appended unless an order is configured. Restart the app after editing a plugin. There is no hot reload yet.
+
+To intentionally replace a built-in market, provider, directory, card, or theme, set `override = true` on that entry; accidental duplicate IDs without `override = true` are rejected.
 
 Card order and hidden cards are stored in TOML:
 
@@ -132,15 +138,26 @@ Points must contain `date` and `value`. The host draws a compact terminal chart.
 
 Values are percentages by default. Add `suffix = ""` to omit `%`.
 
+## Extension points
+
+A Lua plugin returns a table with `api_version = 1` and any combination of:
+
+- `markets`: `{ id, name, description, currency, asset_kinds, price_providers, directory_provider, common_symbols, override }`
+- `providers`: `{ name, markets, history = function(req) ... end, override }`
+- `directories`: `{ name, markets, assets = function(req) ... end, override }`
+- `cards`: `{ id, title, supports_interval, supports_pan, render = function(ctx) ... end, override }`
+- `themes`: `{ id, name, accent, muted, highlight, gain, gain_fill, loss, loss_fill, neutral, border_normal, drift_bar, series, override }`
+
 ## Sandbox and limits
 
-Plugins run in a restricted Lua state:
+Plugins run in a capability-gated Lua sandbox:
 
 - no `os`, `io`, `package`, `debug`, `require`, `load`, `loadfile`, or `dofile`
 - no `print`, to prevent terminal corruption
-- 200 ms execution timeout per render
+- `cards` and `themes` ALWAYS run in a pure compute sandbox with **no network access** and a 200 ms execution timeout per evaluation
+- `providers` and `directories` receive `host.http.get`, `host.json.decode`, and `host.csv.parse` ONLY when the plugin declares `capabilities = { "http" }` and lists target hostnames in `allowed_hosts`
 - ANSI/control characters are stripped
-- panics and Lua errors are contained to the individual card
+- panics and Lua errors are contained to the individual plugin
 
 Plugins are local code and should still be treated as trusted. There is currently no memory quota or hot reload.
 
